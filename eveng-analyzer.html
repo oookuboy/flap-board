@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVE-NG ANALYZER</title>
+<style>
+:root{
+  --bg:#0b0d10; --frame:#14161a; --ink:#f2efe9; --amber:#ffb627;
+  --green:#6fe08a; --red:#ff6464; --cyan:#5ad0e6; --dim:#8a8f98;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--ink);min-height:100vh;
+  font-family:-apple-system,"Helvetica Neue",Arial,sans-serif;
+}
+header{
+  display:flex;align-items:baseline;justify-content:space-between;
+  padding:14px 18px 8px;flex-wrap:wrap;gap:6px;
+}
+.brand{display:flex;align-items:baseline;gap:8px}
+.brand b{font-size:18px;letter-spacing:.12em}
+.brand .jp{font-size:11px;color:var(--dim)}
+.led{font-family:"SF Mono",Menlo,monospace;color:var(--amber);
+  text-shadow:0 0 6px rgba(255,182,39,.45);font-size:13px;letter-spacing:.06em}
+nav{display:flex;gap:6px;padding:0 18px 10px}
+nav button{
+  background:#15181d;color:#9aa0a6;border:1px solid #2c3038;border-radius:8px;
+  font-size:12px;letter-spacing:.08em;padding:8px 16px;cursor:pointer;
+}
+nav button.on{background:#2a2e35;color:var(--amber);border-color:#3a3f48}
+main{padding:0 18px 30px;max-width:1200px;margin:0 auto}
+.hidden{display:none!important}
+.panel{
+  background:var(--frame);border:1px solid #23262c;border-radius:14px;
+  box-shadow:inset 0 2px 14px rgba(0,0,0,.5);padding:14px;margin-bottom:14px;
+}
+.drop{
+  border:2px dashed #2c3038;border-radius:14px;padding:26px 14px;text-align:center;
+  color:var(--dim);cursor:pointer;font-size:13px;line-height:1.8;margin-bottom:14px;
+  transition:border-color .15s,background .15s;
+}
+.drop.over{border-color:var(--amber);background:#191a14;color:var(--amber)}
+.drop b{color:var(--ink);font-size:14px;letter-spacing:.06em}
+.drop input{display:none}
+h2{font-size:13px;letter-spacing:.12em;color:var(--amber);margin-bottom:10px}
+.cards{display:flex;flex-wrap:wrap;gap:10px}
+.card{
+  background:#0e1013;border:1px solid #262a31;border-radius:10px;
+  padding:10px 16px;min-width:110px;text-align:center;
+}
+.card .cv{font-family:"SF Mono",Menlo,monospace;font-size:20px;color:var(--ink)}
+.card .cl{font-size:10px;letter-spacing:.12em;color:var(--dim);margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{
+  text-align:left;color:var(--dim);font-weight:600;letter-spacing:.1em;font-size:10px;
+  padding:6px 8px;border-bottom:1px solid #2c3038;white-space:nowrap;
+}
+td{
+  padding:5px 8px;border-bottom:1px solid #1c1f24;
+  font-family:"SF Mono",Menlo,monospace;white-space:nowrap;
+}
+td.wrap{white-space:normal;word-break:break-all}
+tr:hover td{background:#181b20}
+.num{text-align:right}
+.c-green{color:var(--green)}.c-amber{color:var(--amber)}
+.c-red{color:var(--red)}.c-cyan{color:var(--cyan)}.c-dim{color:var(--dim)}
+.warn{color:var(--red);font-size:12px;line-height:1.9;font-family:"SF Mono",Menlo,monospace}
+.ok{color:var(--green);font-size:12px;font-family:"SF Mono",Menlo,monospace}
+.scrollbox{max-height:420px;overflow:auto;border:1px solid #1c1f24;border-radius:8px}
+.filter{
+  width:100%;background:#0e1013;border:1px solid #2c3038;color:var(--ink);
+  border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:10px;
+  font-family:"SF Mono",Menlo,monospace;
+}
+.note{font-size:11px;color:var(--dim);line-height:1.7;margin-top:8px}
+svg text{font-family:"SF Mono",Menlo,monospace}
+.err{color:var(--red);font-size:13px;padding:8px 2px;font-family:"SF Mono",Menlo,monospace}
+footer{padding:0 18px 24px;max-width:1200px;margin:0 auto}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>EVE-NG ANALYZER</b><span class="jp">ラボ・パケット解析</span></div>
+  <span class="led" id="clock">--:--:--</span>
+</header>
+
+<nav>
+  <button id="tabLab" class="on">LAB (.unl)</button>
+  <button id="tabPcap">PCAP</button>
+</nav>
+
+<main>
+  <!-- ============ LAB ============ -->
+  <section id="scr-lab">
+    <label class="drop" id="dropLab">
+      <b>EVE-NG ラボファイル (.unl) をドロップ</b><br>
+      またはクリックして選択 — トポロジ・リソース・コンフィグを解析します<br>
+      <span style="font-size:11px">EVE-NGサーバの /opt/unetlab/labs/ からエクスポート、または直接コピーした .unl ファイル</span>
+      <input type="file" id="fileLab" accept=".unl,.xml,text/xml">
+    </label>
+    <div id="lab-out"></div>
+  </section>
+
+  <!-- ============ PCAP ============ -->
+  <section id="scr-pcap" class="hidden">
+    <label class="drop" id="dropPcap">
+      <b>キャプチャファイル (.pcap / .pcapng) をドロップ</b><br>
+      またはクリックして選択 — EVE-NGのリンクキャプチャ(Wireshark連携)で保存したファイルを解析します<br>
+      <span style="font-size:11px">ARP / IPv4 / IPv6 / TCP / UDP / ICMP / OSPF / BGP / STP などをデコード</span>
+      <input type="file" id="filePcap" accept=".pcap,.pcapng,.cap">
+    </label>
+    <div id="pcap-out"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="note">
+    完全クライアントサイド動作(ファイルは外部送信されません)。このHTML1枚をEVE-NGサーバ(例: /opt/unetlab/html/ 配下)に置いてブラウザで開くか、手元PCでそのまま開いて使えます。
+  </div>
+</footer>
+
+<script>
+"use strict";
+/* =================================================================
+ *  pure parsing helpers (DOM非依存)
+ * ================================================================= */
+const IPPROTO={1:"ICMP",2:"IGMP",6:"TCP",17:"UDP",47:"GRE",50:"ESP",51:"AH",
+  58:"ICMPv6",88:"EIGRP",89:"OSPF",103:"PIM",112:"VRRP",132:"SCTP"};
+const TCP_PORTS={20:"FTP-DATA",21:"FTP",22:"SSH",23:"TELNET",25:"SMTP",53:"DNS",
+  80:"HTTP",110:"POP3",143:"IMAP",179:"BGP",443:"HTTPS",445:"SMB",514:"SYSLOG",
+  646:"LDP",830:"NETCONF",3389:"RDP"};
+const UDP_PORTS={53:"DNS",67:"DHCP",68:"DHCP",69:"TFTP",123:"NTP",137:"NBNS",
+  161:"SNMP",162:"SNMP-TRAP",500:"ISAKMP",514:"SYSLOG",520:"RIP",1812:"RADIUS",
+  1813:"RADIUS",1985:"HSRP",3784:"BFD",4789:"VXLAN",5353:"MDNS"};
+const ICMP4={0:"Echo reply",3:"Destination unreachable",5:"Redirect",
+  8:"Echo request",11:"Time exceeded"};
+const ICMP6={1:"Dest unreachable",128:"Echo request",129:"Echo reply",
+  133:"Router solicitation",134:"Router advertisement",
+  135:"Neighbor solicitation",136:"Neighbor advertisement"};
+const OSPF_T={1:"Hello",2:"DB Description",3:"LS Request",4:"LS Update",5:"LS Ack"};
+
+function macStr(u,o){const s=[];for(let i=0;i<6;i++)s.push(u[o+i].toString(16).padStart(2,"0"));return s.join(":")}
+function ip4Str(u,o){return u[o]+"."+u[o+1]+"."+u[o+2]+"."+u[o+3]}
+function ip6Str(u,o){
+  const p=[];for(let i=0;i<8;i++)p.push((((u[o+i*2]<<8)|u[o+i*2+1])>>>0).toString(16));
+  let best=-1,bestLen=0,cur=-1;
+  for(let i=0;i<8;i++){
+    if(p[i]==="0"){if(cur<0)cur=i;const len=i-cur+1;if(len>bestLen){best=cur;bestLen=len}}
+    else cur=-1;
+  }
+  if(bestLen>1)return p.slice(0,best).join(":")+"::"+p.slice(best+bestLen).join(":");
+  return p.join(":");
+}
+function maskToLen(m){return m.split(".").reduce((a,o)=>a+((+o).toString(2).match(/1/g)||[]).length,0)}
+function fmtBytes(n){
+  if(n<1024)return n+" B";
+  if(n<1048576)return (n/1024).toFixed(1)+" KB";
+  if(n<1073741824)return (n/1048576).toFixed(1)+" MB";
+  return (n/1073741824).toFixed(2)+" GB";
+}
+
+/* ---------- pcap / pcapng ---------- */
+function parseCapture(buf){
+  if(buf.byteLength<24)throw new Error("ファイルが小さすぎます");
+  const dv=new DataView(buf);
+  const m=dv.getUint32(0,true);
+  if(m===0x0A0D0D0A)return parsePcapng(buf);
+  if(m===0xa1b2c3d4||m===0xd4c3b2a1||m===0xa1b23c4d||m===0x4d3cb2a1)return parsePcap(buf);
+  throw new Error("pcap / pcapng 形式ではありません");
+}
+function parsePcap(buf){
+  const dv=new DataView(buf);
+  const m=dv.getUint32(0,true);
+  const le=(m===0xa1b2c3d4||m===0xa1b23c4d);
+  const ns=(m===0xa1b23c4d||m===0x4d3cb2a1);
+  const linktype=dv.getUint32(20,le)&0x0fffffff;
+  const packets=[];let off=24;
+  while(off+16<=buf.byteLength&&packets.length<300000){
+    const sec=dv.getUint32(off,le),frac=dv.getUint32(off+4,le);
+    const cap=dv.getUint32(off+8,le),orig=dv.getUint32(off+12,le);
+    if(cap>0x7fffffff||off+16+cap>buf.byteLength)break;
+    packets.push({ts:sec+frac/(ns?1e9:1e6),len:orig,data:new Uint8Array(buf,off+16,cap)});
+    off+=16+cap;
+  }
+  return{linktype,packets};
+}
+function parsePcapng(buf){
+  const dv=new DataView(buf);
+  let off=0,le=true,linktype=1,gotIdb=false;
+  const packets=[];
+  while(off+12<=buf.byteLength&&packets.length<300000){
+    let type=dv.getUint32(off,le);
+    if(dv.getUint32(off,true)===0x0A0D0D0A){ // SHB: バイトオーダーを判定
+      le=dv.getUint32(off+8,true)===0x1A2B3C4D;
+      type=0x0A0D0D0A;
+    }
+    const totlen=dv.getUint32(off+4,le);
+    if(totlen<12||totlen%4!==0||off+totlen>buf.byteLength)break;
+    if(type===1&&!gotIdb){linktype=dv.getUint16(off+8,le);gotIdb=true}
+    else if(type===6){ // Enhanced Packet Block
+      const tsh=dv.getUint32(off+12,le),tsl=dv.getUint32(off+16,le);
+      const cap=dv.getUint32(off+20,le),orig=dv.getUint32(off+24,le);
+      if(off+28+cap<=buf.byteLength)
+        packets.push({ts:(tsh*4294967296+tsl)/1e6,len:orig,data:new Uint8Array(buf,off+28,cap)});
+    }else if(type===3){ // Simple Packet Block
+      const orig=dv.getUint32(off+8,le);
+      const cap=Math.min(orig,totlen-16);
+      packets.push({ts:0,len:orig,data:new Uint8Array(buf,off+12,cap)});
+    }
+    off+=totlen;
+  }
+  return{linktype,packets};
+}
+
+/* ---------- frame decode ---------- */
+function decodeFrame(u,linktype){
+  const P={src:"",dst:"",proto:"",info:""};
+  if(linktype!==1){P.proto="LINKTYPE-"+linktype;P.info="非Ethernetリンク";return P}
+  if(u.length<14){P.proto="SHORT";return P}
+  P.dst=macStr(u,0);P.src=macStr(u,6);
+  let off=12,et=(u[off]<<8)|u[off+1];off+=2;
+  const vlan=[];
+  while((et===0x8100||et===0x88a8)&&u.length>=off+4){
+    vlan.push(((u[off]<<8)|u[off+1])&0xfff);
+    et=(u[off+2]<<8)|u[off+3];off+=4;
+  }
+  const vtag=vlan.length?" [VLAN "+vlan.join("/")+"]":"";
+  if(et<=1500){ // 802.3 LLC (STP/CDPなど)
+    if(u.length>=off+3&&u[off]===0x42){P.proto="STP";P.info="Spanning Tree BPDU"+vtag;return P}
+    if(u.length>=off+8&&u[off]===0xaa){P.proto="SNAP";P.info=vtag;return P}
+    P.proto="LLC";P.info=vtag;return P;
+  }
+  if(et===0x0806){
+    P.proto="ARP";
+    if(u.length>=off+28){
+      const op=(u[off+6]<<8)|u[off+7];
+      const spa=ip4Str(u,off+14),tpa=ip4Str(u,off+24);
+      P.info=(op===1?`Who has ${tpa}? Tell ${spa}`:
+              op===2?`${spa} is at ${macStr(u,off+8)}`:"opcode "+op)+vtag;
+    }
+    return P;
+  }
+  if(et===0x0800)return decodeIP4(u,off,P,vtag);
+  if(et===0x86dd)return decodeIP6(u,off,P,vtag);
+  if(et===0x88cc){P.proto="LLDP";P.info=vtag;return P}
+  P.proto="ETH-0x"+et.toString(16).padStart(4,"0");P.info=vtag;
+  return P;
+}
+function decodeIP4(u,off,P,vtag){
+  if(u.length<off+20){P.proto="IPv4";return P}
+  const ihl=(u[off]&0x0f)*4;
+  P.src=ip4Str(u,off+12);P.dst=ip4Str(u,off+16);
+  return decodeL4(u,off+ihl,u[off+9],P,vtag);
+}
+function decodeIP6(u,off,P,vtag){
+  if(u.length<off+40){P.proto="IPv6";return P}
+  P.src=ip6Str(u,off+8);P.dst=ip6Str(u,off+24);
+  return decodeL4(u,off+40,u[off+6],P,vtag);
+}
+function decodeL4(u,off,pr,P,vtag){
+  P.proto=IPPROTO[pr]||("IPPROTO-"+pr);P.info=vtag.trim();
+  if(pr===6&&u.length>=off+14){
+    const sp=(u[off]<<8)|u[off+1],dp=(u[off+2]<<8)|u[off+3];
+    const fl=u[off+13],fs=[];
+    if(fl&2)fs.push("SYN");if(fl&16)fs.push("ACK");if(fl&1)fs.push("FIN");
+    if(fl&4)fs.push("RST");if(fl&8)fs.push("PSH");if(fl&32)fs.push("URG");
+    P.proto=TCP_PORTS[dp]||TCP_PORTS[sp]||"TCP";
+    P.info=`${sp} → ${dp} [${fs.join(",")||"none"}]`+vtag;
+  }else if(pr===17&&u.length>=off+8){
+    const sp=(u[off]<<8)|u[off+1],dp=(u[off+2]<<8)|u[off+3];
+    P.proto=UDP_PORTS[dp]||UDP_PORTS[sp]||"UDP";
+    P.info=`${sp} → ${dp}`+vtag;
+  }else if(pr===1&&u.length>=off+2){
+    P.info=(ICMP4[u[off]]||`type ${u[off]} code ${u[off+1]}`)+vtag;
+  }else if(pr===58&&u.length>=off+1){
+    P.info=(ICMP6[u[off]]||"type "+u[off])+vtag;
+  }else if(pr===89&&u.length>=off+2){
+    P.info=(OSPF_T[u[off+1]]||"type "+u[off+1])+vtag;
+  }
+  return P;
+}
+
+/* ---------- コンフィグ解析 (Cisco系) ---------- */
+function parseNodeConfig(text){
+  const r={hostname:"",ifs:[]};
+  let cur=null,m;
+  for(const line of text.split(/\r?\n/)){
+    if((m=line.match(/^hostname\s+(\S+)/))){r.hostname=m[1];continue}
+    if((m=line.match(/^interface\s+(\S+)/i))){cur=m[1];continue}
+    if(/^[^\s!]/.test(line)){cur=null}
+    if(!cur)continue;
+    if((m=line.match(/^\s+ip\s+address\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)(\s+secondary)?/))){
+      r.ifs.push({name:cur,ip:m[1]+"/"+maskToLen(m[2]),sec:!!m[3]});continue;
+    }
+    if((m=line.match(/^\s+ip\s+address\s+(\d+\.\d+\.\d+\.\d+\/\d+)/))){ // NX-OS/VyOS style
+      r.ifs.push({name:cur,ip:m[1],sec:false});continue;
+    }
+    if((m=line.match(/^\s+ipv6\s+address\s+([0-9A-Fa-f:]+\/\d+)/))){
+      r.ifs.push({name:cur,ip:m[1].toLowerCase(),sec:false});continue;
+    }
+  }
+  return r;
+}
+function b64decode(s){
+  const raw=atob(s.replace(/\s+/g,""));
+  try{ // UTF-8として解釈
+    const bytes=new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+    return new TextDecoder("utf-8",{fatal:false}).decode(bytes);
+  }catch(e){return raw}
+}
+/* ===== UI ===== */
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---------- タブ ---------- */
+const tabLab=document.getElementById("tabLab"),tabPcap=document.getElementById("tabPcap");
+function setTab(t){
+  tabLab.classList.toggle("on",t==="lab");
+  tabPcap.classList.toggle("on",t==="pcap");
+  document.getElementById("scr-lab").classList.toggle("hidden",t!=="lab");
+  document.getElementById("scr-pcap").classList.toggle("hidden",t!=="pcap");
+}
+tabLab.addEventListener("click",()=>setTab("lab"));
+tabPcap.addEventListener("click",()=>setTab("pcap"));
+setInterval(()=>{document.getElementById("clock").textContent=new Date().toTimeString().slice(0,8)},1000);
+document.getElementById("clock").textContent=new Date().toTimeString().slice(0,8);
+
+/* ---------- ドロップゾーン ---------- */
+function bindDrop(zoneId,inputId,handler){
+  const zone=document.getElementById(zoneId),input=document.getElementById(inputId);
+  zone.addEventListener("dragover",e=>{e.preventDefault();zone.classList.add("over")});
+  zone.addEventListener("dragleave",()=>zone.classList.remove("over"));
+  zone.addEventListener("drop",e=>{
+    e.preventDefault();zone.classList.remove("over");
+    if(e.dataTransfer.files.length)handler(e.dataTransfer.files[0]);
+  });
+  input.addEventListener("change",()=>{if(input.files.length){handler(input.files[0]);input.value=""}});
+}
+
+/* =================================================================
+ *  LAB (.unl) 解析
+ * ================================================================= */
+const NODE_COLORS={qemu:"#ffb627",iol:"#6fe08a",dynamips:"#ff6464",docker:"#5ad0e6"};
+bindDrop("dropLab","fileLab",f=>{
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{renderLab(analyzeUNL(rd.result),f.name)}
+    catch(e){document.getElementById("lab-out").innerHTML=`<div class="err">解析エラー: ${esc(e.message)}</div>`}
+  };
+  rd.readAsText(f);
+});
+
+function analyzeUNL(text){
+  const doc=new DOMParser().parseFromString(text,"application/xml");
+  if(doc.getElementsByTagName("parsererror").length)throw new Error("XMLの解析に失敗しました");
+  const lab=doc.getElementsByTagName("lab")[0];
+  if(!lab)throw new Error("lab要素が見つかりません(.unlファイルですか?)");
+
+  const A={name:lab.getAttribute("name")||"",version:lab.getAttribute("version")||"",
+    author:lab.getAttribute("author")||"",nodes:[],nets:{},serialLinks:[],configs:{},warnings:[]};
+
+  for(const n of doc.getElementsByTagName("network")){
+    A.nets[n.getAttribute("id")]={
+      id:n.getAttribute("id"),name:n.getAttribute("name")||"",
+      type:n.getAttribute("type")||"bridge",
+      vis:n.getAttribute("visibility")!=="0",
+      left:parseFloat(n.getAttribute("left"))||0,top:parseFloat(n.getAttribute("top"))||0,
+      attach:[]};
+  }
+  for(const el of doc.getElementsByTagName("node")){
+    const node={
+      id:el.getAttribute("id"),name:el.getAttribute("name")||("node"+el.getAttribute("id")),
+      type:el.getAttribute("type")||"",template:el.getAttribute("template")||"",
+      image:el.getAttribute("image")||"",console:el.getAttribute("console")||"",
+      cpu:parseInt(el.getAttribute("cpu"))||0,ram:parseInt(el.getAttribute("ram"))||0,
+      eth:parseInt(el.getAttribute("ethernet"))||0,
+      left:parseFloat(el.getAttribute("left"))||0,top:parseFloat(el.getAttribute("top"))||0,
+      ifs:[],connected:0};
+    for(const i of el.getElementsByTagName("interface")){
+      const itf={id:i.getAttribute("id"),name:i.getAttribute("name")||("e"+i.getAttribute("id")),
+        netId:i.getAttribute("network_id"),
+        remoteId:i.getAttribute("remote_id"),remoteIf:i.getAttribute("remote_if")};
+      node.ifs.push(itf);
+      if(itf.netId&&A.nets[itf.netId]){
+        A.nets[itf.netId].attach.push({node,ifName:itf.name});node.connected++;
+      }else if(itf.remoteId){ // IOLシリアル直結
+        node.connected++;
+        if(+node.id<+itf.remoteId)A.serialLinks.push({a:node,aIf:itf.name,bId:itf.remoteId,bIf:itf.remoteIf});
+      }
+    }
+    A.nodes.push(node);
+  }
+  const byId={};A.nodes.forEach(n=>byId[n.id]=n);
+  A.serialLinks.forEach(l=>l.b=byId[l.bId]);
+  A.serialLinks=A.serialLinks.filter(l=>l.b);
+
+  for(const c of doc.getElementsByTagName("config")){
+    const id=c.getAttribute("id");
+    let body=(c.textContent||"").trim();
+    if(!body)continue;
+    if(/^[A-Za-z0-9+/=\s]+$/.test(body)){try{body=b64decode(body)}catch(e){}}
+    A.configs[id]=parseNodeConfig(body);
+  }
+
+  // 警告チェック
+  const names={};
+  A.nodes.forEach(n=>{
+    (names[n.name]=names[n.name]||[]).push(n);
+    if(n.ifs.length&&!n.connected)A.warnings.push(`ノード ${n.name}: どこにも接続されていません`);
+  });
+  Object.values(names).filter(v=>v.length>1)
+    .forEach(v=>A.warnings.push(`ノード名 "${v[0].name}" が重複しています (${v.length}台)`));
+  Object.values(A.nets).forEach(nw=>{
+    if(nw.type==="bridge"&&nw.attach.length===1)
+      A.warnings.push(`ネットワーク ${nw.name||nw.id}: 接続が1本のみ(未接続リンク)`);
+  });
+  const ipMap={};
+  for(const[id,cfg]of Object.entries(A.configs)){
+    const nn=(byId[id]&&byId[id].name)||("id"+id);
+    cfg.ifs.forEach(i=>{
+      const ip=i.ip.split("/")[0];
+      (ipMap[ip]=ipMap[ip]||[]).push(nn+" "+i.name);
+    });
+  }
+  Object.entries(ipMap).filter(([,v])=>v.length>1)
+    .forEach(([ip,v])=>A.warnings.push(`IPアドレス重複 ${ip}: ${v.join(" / ")}`));
+  return A;
+}
+
+function labTopoSVG(A){
+  const pts=[...A.nodes,...Object.values(A.nets).filter(n=>n.vis&&n.attach.length)];
+  if(!pts.length)return"";
+  let maxX=0,maxY=0,hasPos=false;
+  pts.forEach(p=>{if(p.left||p.top)hasPos=true;maxX=Math.max(maxX,p.left);maxY=Math.max(maxY,p.top)});
+  if(!hasPos){ // 座標なしはグリッド配置
+    A.nodes.forEach((n,i)=>{n.left=90+(i%5)*160;n.top=70+Math.floor(i/5)*130});
+    Object.values(A.nets).forEach((n,i)=>{n.left=170+(i%5)*160;n.top=130+Math.floor(i/5)*130});
+    maxX=90+4*160;maxY=70+Math.ceil((A.nodes.length)/5)*130;
+  }
+  const W=maxX+120,H=maxY+90;
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-height:460px;background:#0e1013;border:1px solid #23262c;border-radius:10px">`;
+  const line=(x1,y1,x2,y2)=>s+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#3a3f48" stroke-width="1.6"/>`;
+  Object.values(A.nets).forEach(nw=>{
+    if(nw.attach.length===2&&!nw.vis){ // p2pリンクは直線
+      const[a,b]=nw.attach;line(a.node.left+22,a.node.top+22,b.node.left+22,b.node.top+22);
+    }else if(nw.attach.length){
+      const cx=nw.vis?nw.left+16:nw.attach.reduce((t,a)=>t+a.node.left,0)/nw.attach.length+22;
+      const cy=nw.vis?nw.top+16:nw.attach.reduce((t,a)=>t+a.node.top,0)/nw.attach.length+22;
+      nw.attach.forEach(a=>line(a.node.left+22,a.node.top+22,cx,cy));
+      s+=`<rect x="${cx-9}" y="${cy-9}" width="18" height="18" rx="3" fill="#1c1f24" stroke="#8a8f98"/>`;
+      if(nw.vis)s+=`<text x="${cx}" y="${cy+26}" text-anchor="middle" font-size="10" fill="#8a8f98">${esc(nw.name)}</text>`;
+    }
+  });
+  A.serialLinks.forEach(l=>line(l.a.left+22,l.a.top+22,l.b.left+22,l.b.top+22));
+  A.nodes.forEach(n=>{
+    const c=NODE_COLORS[n.type]||"#9aa0a6";
+    s+=`<circle cx="${n.left+22}" cy="${n.top+22}" r="15" fill="#14161a" stroke="${c}" stroke-width="2"/>`;
+    s+=`<text x="${n.left+22}" y="${n.top+58}" text-anchor="middle" font-size="11" fill="#f2efe9">${esc(n.name)}</text>`;
+  });
+  return s+"</svg>";
+}
+
+function renderLab(A,fname){
+  const totCPU=A.nodes.reduce((t,n)=>t+n.cpu,0);
+  const totRAM=A.nodes.reduce((t,n)=>t+n.ram,0);
+  const nets=Object.values(A.nets);
+  const p2p=nets.filter(n=>n.attach.length===2&&!n.vis).length+A.serialLinks.length;
+
+  let h=`<div class="panel"><h2>LAB SUMMARY — ${esc(A.name||fname)}</h2><div class="cards">`
+    +card("NODES",A.nodes.length)+card("NETWORKS",nets.length)+card("P2P LINKS",p2p)
+    +card("TOTAL vCPU",totCPU)+card("TOTAL RAM",totRAM>=1024?(totRAM/1024).toFixed(1)+" GB":totRAM+" MB")
+    +card("CONFIGS",Object.keys(A.configs).length)
+    +`</div><div class="note">version: ${esc(A.version)}${A.author?" / author: "+esc(A.author):""} — vCPU/RAM 合計はこのラボを全ノード起動した場合にEVE-NGホストへ要求されるリソースの目安です。</div></div>`;
+
+  h+=`<div class="panel"><h2>TOPOLOGY</h2>${labTopoSVG(A)||'<div class="note">描画対象がありません</div>'}</div>`;
+
+  h+=`<div class="panel"><h2>NODES</h2><div class="scrollbox"><table><thead><tr>
+      <th>ID</th><th>NAME</th><th>TYPE</th><th>TEMPLATE</th><th>IMAGE</th>
+      <th class="num">vCPU</th><th class="num">RAM(MB)</th><th class="num">IF接続</th><th>CONSOLE</th>
+      </tr></thead><tbody>`;
+  A.nodes.sort((a,b)=>+a.id-+b.id).forEach(n=>{
+    h+=`<tr><td class="c-dim">${esc(n.id)}</td><td class="c-amber">${esc(n.name)}</td>
+      <td>${esc(n.type)}</td><td>${esc(n.template)}</td><td class="wrap c-dim">${esc(n.image)}</td>
+      <td class="num">${n.cpu||"-"}</td><td class="num">${n.ram||"-"}</td>
+      <td class="num ${n.connected? "c-green":"c-red"}">${n.connected}/${n.ifs.length}</td>
+      <td>${esc(n.console)}</td></tr>`;
+  });
+  h+=`</tbody></table></div></div>`;
+
+  h+=`<div class="panel"><h2>LINKS / NETWORKS</h2><div class="scrollbox"><table><thead>
+      <tr><th>NETWORK</th><th>TYPE</th><th>接続</th></tr></thead><tbody>`;
+  nets.forEach(nw=>{
+    const conn=nw.attach.map(a=>`${esc(a.node.name)} <span class="c-dim">${esc(a.ifName)}</span>`).join(" ⇄ ");
+    h+=`<tr><td>${esc(nw.name||("net"+nw.id))}</td><td class="c-dim">${esc(nw.type)}${nw.vis?"":" (p2p)"}</td>
+      <td class="wrap">${conn||'<span class="c-red">未接続</span>'}</td></tr>`;
+  });
+  A.serialLinks.forEach(l=>{
+    h+=`<tr><td>serial</td><td class="c-dim">serial (p2p)</td>
+      <td class="wrap">${esc(l.a.name)} <span class="c-dim">${esc(l.aIf)}</span> ⇄ ${esc(l.b.name)} <span class="c-dim">${esc(l.bIf||"")}</span></td></tr>`;
+  });
+  h+=`</tbody></table></div></div>`;
+
+  const cfgRows=[];
+  for(const[id,cfg]of Object.entries(A.configs)){
+    const node=A.nodes.find(n=>n.id===id);
+    const nn=(node&&node.name)||("id"+id);
+    if(!cfg.ifs.length)cfgRows.push({n:nn,h:cfg.hostname,i:"-",ip:'<span class="c-dim">IP設定なし</span>'});
+    cfg.ifs.forEach(i=>cfgRows.push({n:nn,h:cfg.hostname,i:esc(i.name),ip:esc(i.ip)+(i.sec?' <span class="c-dim">(secondary)</span>':"")}));
+  }
+  if(cfgRows.length){
+    h+=`<div class="panel"><h2>IP ADDRESSING (startup-configから抽出)</h2><div class="scrollbox">
+        <table><thead><tr><th>NODE</th><th>HOSTNAME</th><th>INTERFACE</th><th>ADDRESS</th></tr></thead><tbody>`;
+    cfgRows.forEach(r=>h+=`<tr><td class="c-amber">${esc(r.n)}</td><td>${esc(r.h)}</td><td>${r.i}</td><td class="c-green">${r.ip}</td></tr>`);
+    h+=`</tbody></table></div></div>`;
+  }
+
+  h+=`<div class="panel"><h2>WARNINGS</h2>`;
+  h+=A.warnings.length
+    ?`<div class="warn">${A.warnings.map(w=>"⚠ "+esc(w)).join("<br>")}</div>`
+    :`<div class="ok">✓ 問題は検出されませんでした</div>`;
+  h+=`</div>`;
+  document.getElementById("lab-out").innerHTML=h;
+}
+
+function card(label,val){return `<div class="card"><div class="cv">${val}</div><div class="cl">${label}</div></div>`}
+
+/* =================================================================
+ *  PCAP 解析
+ * ================================================================= */
+let pcapRows=[];
+bindDrop("dropPcap","filePcap",f=>{
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{renderPcap(parseCapture(rd.result),f.name,rd.result.byteLength)}
+    catch(e){document.getElementById("pcap-out").innerHTML=`<div class="err">解析エラー: ${esc(e.message)}</div>`}
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+function renderPcap(cap,fname,fsize){
+  const{linktype,packets}=cap;
+  if(!packets.length){
+    document.getElementById("pcap-out").innerHTML=`<div class="err">パケットが見つかりません</div>`;
+    return;
+  }
+  const t0=packets.find(p=>p.ts>0)?.ts??0;
+  const protoStat={},talkers={},convs={};
+  let totBytes=0,lastTs=t0;
+  pcapRows=packets.map((p,i)=>{
+    const d=decodeFrame(p.data,linktype);
+    totBytes+=p.len;if(p.ts>lastTs)lastTs=p.ts;
+    protoStat[d.proto]=(protoStat[d.proto]||{p:0,b:0});
+    protoStat[d.proto].p++;protoStat[d.proto].b+=p.len;
+    if(d.src){
+      talkers[d.src]=talkers[d.src]||{p:0,b:0};talkers[d.src].p++;talkers[d.src].b+=p.len;
+      const key=[d.src,d.dst].sort().join(" ⇄ ");
+      convs[key]=convs[key]||{p:0,b:0};convs[key].p++;convs[key].b+=p.len;
+    }
+    return{no:i+1,t:p.ts>0?(p.ts-t0).toFixed(6):"-",src:d.src,dst:d.dst,proto:d.proto,len:p.len,info:d.info};
+  });
+  const dur=Math.max(lastTs-t0,0);
+
+  let h=`<div class="panel"><h2>CAPTURE SUMMARY — ${esc(fname)}</h2><div class="cards">`
+    +card("PACKETS",packets.length.toLocaleString())
+    +card("BYTES",fmtBytes(totBytes))
+    +card("DURATION",dur>0?dur.toFixed(2)+" s":"-")
+    +card("AVG PPS",dur>0?Math.round(packets.length/dur).toLocaleString():"-")
+    +card("AVG BPS",dur>0?fmtBytes(totBytes*8/dur).replace(" B"," b")+"ps":"-")
+    +card("FILE",fmtBytes(fsize))
+    +`</div>${packets.length>=300000?'<div class="note">※ 300,000パケットで打ち切りました</div>':""}</div>`;
+
+  const stats=Object.entries(protoStat).sort((a,b)=>b[1].p-a[1].p);
+  h+=`<div class="panel"><h2>PROTOCOLS</h2><div class="scrollbox"><table><thead>
+      <tr><th>PROTOCOL</th><th class="num">PACKETS</th><th class="num">%</th><th class="num">BYTES</th></tr></thead><tbody>`;
+  stats.forEach(([k,v])=>{
+    h+=`<tr><td class="c-amber">${esc(k)}</td><td class="num">${v.p.toLocaleString()}</td>
+      <td class="num c-dim">${(v.p/packets.length*100).toFixed(1)}</td><td class="num">${fmtBytes(v.b)}</td></tr>`;
+  });
+  h+=`</tbody></table></div></div>`;
+
+  const top=Object.entries(talkers).sort((a,b)=>b[1].b-a[1].b).slice(0,10);
+  const cv=Object.entries(convs).sort((a,b)=>b[1].b-a[1].b).slice(0,15);
+  h+=`<div class="panel" style="display:flex;gap:20px;flex-wrap:wrap">
+      <div style="flex:1;min-width:280px"><h2>TOP TALKERS (送信元)</h2><table><thead>
+      <tr><th>SOURCE</th><th class="num">PKTS</th><th class="num">BYTES</th></tr></thead><tbody>`;
+  top.forEach(([k,v])=>h+=`<tr><td>${esc(k)}</td><td class="num">${v.p.toLocaleString()}</td><td class="num">${fmtBytes(v.b)}</td></tr>`);
+  h+=`</tbody></table></div>
+      <div style="flex:1.4;min-width:320px"><h2>CONVERSATIONS</h2><table><thead>
+      <tr><th>PAIR</th><th class="num">PKTS</th><th class="num">BYTES</th></tr></thead><tbody>`;
+  cv.forEach(([k,v])=>h+=`<tr><td class="wrap">${esc(k)}</td><td class="num">${v.p.toLocaleString()}</td><td class="num">${fmtBytes(v.b)}</td></tr>`);
+  h+=`</tbody></table></div></div>`;
+
+  h+=`<div class="panel"><h2>PACKET LIST</h2>
+      <input class="filter" id="pktFilter" placeholder="フィルタ (例: ospf / 10.0.0.1 / arp / bgp)">
+      <div class="scrollbox" style="max-height:480px"><table><thead>
+      <tr><th class="num">NO</th><th class="num">TIME</th><th>SOURCE</th><th>DEST</th><th>PROTO</th><th class="num">LEN</th><th>INFO</th></tr>
+      </thead><tbody id="pktBody"></tbody></table></div>
+      <div class="note" id="pktNote"></div></div>`;
+
+  document.getElementById("pcap-out").innerHTML=h;
+  document.getElementById("pktFilter").addEventListener("input",e=>renderPktRows(e.target.value));
+  renderPktRows("");
+}
+function renderPktRows(filter){
+  const q=filter.trim().toLowerCase();
+  const rows=q?pcapRows.filter(r=>(r.src+" "+r.dst+" "+r.proto+" "+r.info).toLowerCase().includes(q)):pcapRows;
+  const LIM=1000;
+  const cls=p=>/OSPF|BGP|EIGRP|RIP|BFD|LDP/.test(p)?"c-green":/ARP|STP|LLDP|ICMP/.test(p)?"c-amber":/RST|SHORT/.test(p)?"c-red":"c-cyan";
+  document.getElementById("pktBody").innerHTML=rows.slice(0,LIM).map(r=>
+    `<tr><td class="num c-dim">${r.no}</td><td class="num c-dim">${r.t}</td>
+     <td>${esc(r.src)}</td><td>${esc(r.dst)}</td>
+     <td class="${cls(r.proto)}">${esc(r.proto)}</td>
+     <td class="num">${r.len}</td><td class="wrap c-dim">${esc(r.info)}</td></tr>`).join("");
+  document.getElementById("pktNote").textContent=
+    `${rows.length.toLocaleString()} / ${pcapRows.length.toLocaleString()} パケット表示`+(rows.length>LIM?` (先頭${LIM}件のみ描画)`:"");
+}
+</script>
+</body>
+</html>
