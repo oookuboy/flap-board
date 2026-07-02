@@ -78,7 +78,7 @@ canvas{width:100%;height:100%;display:block;border-radius:8px}
 <body>
 <div id="app">
   <header>
-    <div class="brand"><b>AUDIO ANALYZER</b><span class="jp">音響アナライザー</span></div>
+    <div class="brand"><b>AUDIO ANALYZER</b><span class="jp">音響アナライザー for Even G2</span></div>
     <span class="led" id="stat" style="font-size:11px">STANDBY</span>
   </header>
 
@@ -86,6 +86,8 @@ canvas{width:100%;height:100%;display:block;border-radius:8px}
     <button class="btn" id="bMic">🎙 MIC</button>
     <button class="btn" id="bFile">♫ FILE</button>
     <button class="btn" id="bTone">∿ TONE</button>
+    <button class="btn" id="bGlass">👓 CONNECT</button>
+    <button class="btn" id="bHud" disabled style="opacity:.5">HUD OFF</button>
     <input type="file" id="fIn" accept="audio/*" style="display:none">
     <span id="toneCtl" class="sl">20Hz<input type="range" id="toneF" min="0" max="1000" value="566">20k
       <span class="led" id="toneV" style="font-size:11px">1000 Hz</span></span>
@@ -368,6 +370,7 @@ function updMeters(){
   const rms=Math.sqrt(sum/timeData.length);
   const rdb=rms>1e-6?20*Math.log10(rms):-Infinity;
   const pdb=pk>1e-6?20*Math.log10(pk):-Infinity;
+  lastMeter.rdb=rdb;lastMeter.pdb=pdb;
   $("vRms").innerHTML=(isFinite(rdb)?rdb.toFixed(1):"-∞")+" <small>dBFS</small>";
   $("vPeak").innerHTML=(isFinite(pdb)?pdb.toFixed(1):"-∞")+" <small>dBFS</small>";
   $("mRms").style.width=Math.max(0,Math.min(100,(rdb+60)/60*100))+"%";
@@ -377,10 +380,98 @@ function updMeters(){
     $("vFreq").innerHTML=(f<1000?f.toFixed(1):(f/1000).toFixed(3)+"k")+" <small>Hz</small>";
     const nt=noteName(f);
     $("vNote").textContent=nt?nt.name+" "+(nt.cents>=0?"+":"")+nt.cents+"¢":"---";
+    lastMeter.f=f;lastMeter.note=nt;
   }else{
     $("vFreq").innerHTML="--- <small>Hz</small>";$("vNote").textContent="---";
+    lastMeter.f=null;lastMeter.note=null;
   }
 }
+
+/* ================= Even G1/G2 HUD (Web Bluetooth) =================
+ * Even Realities公式デモアプリ(EvenDemoApp)で公開されているBLEプロトコルに
+ * 基づく実装。両テンプル(L/R)が別々のBLEペリフェラル(Nordic UART Service)
+ * として見え、0x4Eコマンドでテキストを表示する。G2はG1の後継のため同系
+ * プロトコルを想定 — 動かない場合はこの部分の調整が必要。 */
+const NUS_SVC="6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_TX ="6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX ="6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const lastMeter={rdb:-Infinity,pdb:-Infinity,f:null,note:null};
+const glasses={L:null,R:null};
+let hudOn=false,hudSeq=0,hudTimer=null,hbTimer=null,bleBusy=false;
+
+function hudUI(){
+  const l=!!glasses.L,r=!!glasses.R;
+  $("bGlass").textContent="👓 "+(l||r?(l?"L":"−")+"·"+(r?"R":"−"):"CONNECT");
+  $("bGlass").classList.toggle("on",l||r);
+  const en=l||r;
+  $("bHud").disabled=!en;$("bHud").style.opacity=en?1:.5;
+  $("bHud").textContent=hudOn?"HUD ON":"HUD OFF";
+  $("bHud").classList.toggle("on",hudOn);
+}
+async function glassConnect(){
+  if(!navigator.bluetooth){
+    msg("Web Bluetooth非対応ブラウザです (Android/PCのChrome、iOSはBluefy等で開いてください)");return;
+  }
+  try{
+    const dev=await navigator.bluetooth.requestDevice({
+      filters:[{namePrefix:"Even"}],optionalServices:[NUS_SVC]});
+    const name=dev.name||"";
+    const side=/_L_|_L\b|G\d_L/i.test(name)?"L":/_R_|_R\b|G\d_R/i.test(name)?"R":(glasses.L?"R":"L");
+    const server=await dev.gatt.connect();
+    const svc=await server.getPrimaryService(NUS_SVC);
+    const tx=await svc.getCharacteristic(NUS_TX);
+    try{const rx=await svc.getCharacteristic(NUS_RX);await rx.startNotifications()}catch(e){}
+    glasses[side]={device:dev,tx};
+    dev.addEventListener("gattserverdisconnected",()=>{glasses[side]=null;hudUI()});
+    msg("");hudUI();
+    if(!hbTimer)hbTimer=setInterval(hudHeartbeat,8000);
+    if(!glasses.L||!glasses.R)msg("もう一度👓を押して反対側("+(glasses.L?"R":"L")+")も接続すると両眼表示になります");
+  }catch(e){
+    if(e.name!=="NotFoundError")msg("グラス接続失敗: "+e.message);
+  }
+}
+async function bleSendBoth(bytes){
+  if(bleBusy)return;bleBusy=true;
+  for(const s of["L","R"]){ // 左→右の順で送る(Evenプロトコルの作法)
+    const g=glasses[s];if(!g)continue;
+    try{await g.tx.writeValue(bytes)}catch(e){}
+  }
+  bleBusy=false;
+}
+function hudHeartbeat(){
+  if(!glasses.L&&!glasses.R)return;
+  const s=hudSeq++&0xff;
+  bleSendBoth(new Uint8Array([0x25,0x06,0x00,s,0x04,s]));
+}
+function hudSendText(str){
+  const body=new TextEncoder().encode(str);
+  // 0x4E: seq, total_pkg, cur_pkg, screen_status(0x71=新規画面+表示),
+  //       char_pos(2B), cur_page, max_page, text...
+  const head=[0x4E,hudSeq++&0xff,1,0,0x71,0,0,1,1];
+  const pkt=new Uint8Array(head.length+body.length);
+  pkt.set(head,0);pkt.set(body,head.length);
+  return bleSendBoth(pkt);
+}
+function hudFrame(){
+  if(!hudOn||(!glasses.L&&!glasses.R))return;
+  const m=lastMeter;
+  const fmt=v=>isFinite(v)?v.toFixed(1):"-inf";
+  const n=Math.max(0,Math.min(20,Math.round((m.rdb+60)/60*20)));
+  const bar="#".repeat(n)+"-".repeat(20-n);
+  const fr=m.f?(m.f<1000?m.f.toFixed(1)+" Hz":(m.f/1000).toFixed(3)+" kHz"):"---";
+  const nt=m.note?m.note.name+" "+(m.note.cents>=0?"+":"")+m.note.cents+"c":"";
+  hudSendText(
+    `RMS ${fmt(m.rdb)} dB   PEAK ${fmt(m.pdb)} dB\n`+
+    `[${bar}]\n`+
+    `${fr}   ${nt}`);
+}
+$("bGlass").addEventListener("click",glassConnect);
+$("bHud").addEventListener("click",()=>{
+  hudOn=!hudOn;hudUI();
+  if(hudOn){hudFrame();hudTimer=setInterval(hudFrame,500)}
+  else{clearInterval(hudTimer);hudTimer=null;
+    bleSendBoth(new Uint8Array([0x18]))} // 0x18: 表示終了→ダッシュボードへ
+});
 
 /* ================= main loop ================= */
 function loop(){
