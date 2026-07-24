@@ -399,14 +399,54 @@ const lastMeter={rdb:-Infinity,pdb:-Infinity,f:null,note:null};
 const glasses={L:null,R:null};
 let hudOn=false,hudSeq=0,hudTimer=null,hbTimer=null,bleBusy=false;
 
+// GATTがつながっていて送信可能な状態か
+function connected(g){return !!(g&&g.tx&&g.device&&g.device.gatt&&g.device.gatt.connected);}
+function anyUp(){return connected(glasses.L)||connected(glasses.R);}
+
 function hudUI(){
-  const l=!!glasses.L,r=!!glasses.R;
-  $("bGlass").textContent="👓 "+(l||r?(l?"L":"−")+"·"+(r?"R":"−"):"CONNECT");
-  $("bGlass").classList.toggle("on",l||r);
-  const en=l||r;
+  // L / R = 接続中, … = 再接続中, − = 未接続
+  const sym=side=>{const g=glasses[side];return connected(g)?side:(g&&g.reconnecting?"…":"−");};
+  const has=glasses.L||glasses.R;
+  $("bGlass").textContent="👓 "+(has?sym("L")+"·"+sym("R"):"CONNECT");
+  $("bGlass").classList.toggle("on",anyUp());
+  const en=anyUp();
   $("bHud").disabled=!en;$("bHud").style.opacity=en?1:.5;
   $("bHud").textContent=hudOn?"HUD ON":"HUD OFF";
   $("bHud").classList.toggle("on",hudOn);
+}
+// デバイスへGATT接続し、TX/RXを確立してglasses[side]に登録する
+async function attachGlass(side,dev){
+  const server=await dev.gatt.connect();
+  const svc=await server.getPrimaryService(NUS_SVC);
+  const tx=await svc.getCharacteristic(NUS_TX);
+  try{const rx=await svc.getCharacteristic(NUS_RX);await rx.startNotifications()}catch(e){}
+  glasses[side]={device:dev,tx,reconnecting:false,tries:0};
+  bindDisconnect(side,dev);
+  return glasses[side];
+}
+// 切断イベントを監視し、切れたら自動再接続を開始する(接続ごとに一度だけ)
+function bindDisconnect(side,dev){
+  dev.addEventListener("gattserverdisconnected",()=>{glassReconnect(side);},{once:true});
+}
+// 指数バックオフで再接続を試みる。復帰したらHUD表示も自動で戻す
+async function glassReconnect(side){
+  const g=glasses[side];
+  if(!g||g.closed)return;          // 手動切断済みなら何もしない
+  g.tx=null;g.reconnecting=true;hudUI();
+  while(g.tries<8&&!g.closed){
+    const wait=Math.min(1000*2**g.tries,15000); // 1s,2s,4s…最大15s
+    await new Promise(r=>setTimeout(r,wait));
+    g.tries++;
+    try{
+      await attachGlass(side,g.device); // 成功でglasses[side]が新オブジェクトに置き換わる
+      msg("");hudUI();
+      if(hudOn)hudFrame();              // 復帰後すぐにHUDを描き直す
+      return;
+    }catch(e){/* まだ圏外/スリープ中 → 次のバックオフで再試行 */}
+  }
+  g.reconnecting=false;
+  msg(side+"側グラスの再接続に失敗しました。👓 をもう一度押してください");
+  hudUI();
 }
 async function glassConnect(){
   if(!navigator.bluetooth){
@@ -416,16 +456,11 @@ async function glassConnect(){
     const dev=await navigator.bluetooth.requestDevice({
       filters:[{namePrefix:"Even"}],optionalServices:[NUS_SVC]});
     const name=dev.name||"";
-    const side=/_L_|_L\b|G\d_L/i.test(name)?"L":/_R_|_R\b|G\d_R/i.test(name)?"R":(glasses.L?"R":"L");
-    const server=await dev.gatt.connect();
-    const svc=await server.getPrimaryService(NUS_SVC);
-    const tx=await svc.getCharacteristic(NUS_TX);
-    try{const rx=await svc.getCharacteristic(NUS_RX);await rx.startNotifications()}catch(e){}
-    glasses[side]={device:dev,tx};
-    dev.addEventListener("gattserverdisconnected",()=>{glasses[side]=null;hudUI()});
+    const side=/_L_|_L\b|G\d_L/i.test(name)?"L":/_R_|_R\b|G\d_R/i.test(name)?"R":(connected(glasses.L)?"R":"L");
+    await attachGlass(side,dev);
     msg("");hudUI();
     if(!hbTimer)hbTimer=setInterval(hudHeartbeat,8000);
-    if(!glasses.L||!glasses.R)msg("もう一度👓を押して反対側("+(glasses.L?"R":"L")+")も接続すると両眼表示になります");
+    if(!connected(glasses.L)||!connected(glasses.R))msg("もう一度👓を押して反対側("+(connected(glasses.L)?"R":"L")+")も接続すると両眼表示になります");
   }catch(e){
     if(e.name!=="NotFoundError")msg("グラス接続失敗: "+e.message);
   }
@@ -433,13 +468,13 @@ async function glassConnect(){
 async function bleSendBoth(bytes){
   if(bleBusy)return;bleBusy=true;
   for(const s of["L","R"]){ // 左→右の順で送る(Evenプロトコルの作法)
-    const g=glasses[s];if(!g)continue;
+    const g=glasses[s];if(!connected(g))continue; // 再接続中(tx=null)は送らない
     try{await g.tx.writeValue(bytes)}catch(e){}
   }
   bleBusy=false;
 }
 function hudHeartbeat(){
-  if(!glasses.L&&!glasses.R)return;
+  if(!anyUp())return;
   const s=hudSeq++&0xff;
   bleSendBoth(new Uint8Array([0x25,0x06,0x00,s,0x04,s]));
 }
@@ -453,7 +488,7 @@ function hudSendText(str){
   return bleSendBoth(pkt);
 }
 function hudFrame(){
-  if(!hudOn||(!glasses.L&&!glasses.R))return;
+  if(!hudOn||!anyUp())return;
   const m=lastMeter;
   const fmt=v=>isFinite(v)?v.toFixed(1):"-inf";
   const n=Math.max(0,Math.min(20,Math.round((m.rdb+60)/60*20)));
